@@ -102,7 +102,7 @@ public sealed class SimpleAgent : IPlayerAgent
                     var o = d.Options[i];
                     if (o.IsPass) continue;
                     var a = me.Stage[(int)o.Slot!.Value]!;
-                    var def = opp.Stage[(int)o.Slot.Value];
+                    var def = opp.Stage[(int)o.Slot.Value.Facing()];
                     int score = o.AttackType switch
                     {
                         AttackType.Direct => 1000,

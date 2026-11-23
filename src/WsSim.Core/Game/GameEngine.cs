@@ -42,6 +42,44 @@ public sealed partial class GameEngine
     /// <summary>每次向玩家提问前触发（可用于界面刷新、联机发送状态哈希）。</summary>
     public event Action<Decision>? DecisionRequested;
 
+    /// <summary>局面每一步变化（卡移动、方向改变、洗牌、攻击宣告、阶段开始）后触发，在引擎线程上同步调用。</summary>
+    public event Action<GameEvent>? EventRaised;
+
+    private void Raise(GameEvent e) => EventRaised?.Invoke(e);
+
+    private void SetPhase(Phase phase)
+    {
+        State.Phase = phase;
+        Raise(new PhaseEvent(State.ActivePlayer, State.TurnNumber, phase));
+    }
+
+    private void SetOrientation(CardInstance c, CardOrientation o)
+    {
+        if (c.Orientation == o) return;
+        var from = c.Orientation;
+        c.Orientation = o;
+        if (c.Zone == ZoneType.Stage && State.Players[c.Owner].SlotOf(c) is { } slot)
+            Raise(new CardOrientationEvent(c.Owner, c.InstanceId, slot, from, o));
+    }
+
+    private void Shuffle(PlayerState p)
+    {
+        _rng.Shuffle(p.Deck);
+        Raise(new ShuffleEvent(p.Index));
+    }
+
+    /// <summary>卡现在所在的位置（区域、列表序号、舞台格）。</summary>
+    private (ZoneType Zone, int Index, StageSlot? Slot) Where(CardInstance c)
+    {
+        var p = State.Players[c.Owner];
+        if (c.Zone == ZoneType.Stage)
+        {
+            var s = p.SlotOf(c);
+            return (ZoneType.Stage, s is { } x ? (int)x : -1, s);
+        }
+        return (c.Zone, p.ZoneList(c.Zone).IndexOf(c), null);
+    }
+
     public GameEngine(Deck deck0, Deck deck1, IPlayerAgent agent0, IPlayerAgent agent1, ulong seed, GameOptions? options = null)
     {
         _agents = new[] { agent0, agent1 };
@@ -84,9 +122,9 @@ public sealed partial class GameEngine
 
     internal void Setup()
     {
-        State.Phase = Phase.Setup;
+        SetPhase(Phase.Setup);
         foreach (var p in State.Players)
-            _rng.Shuffle(p.Deck);
+            Shuffle(p);
 
         // 猜拳：胜者由随机数决定，胜者选择先攻或后攻。
         int rpsWinner = _rng.NextInt(2);
@@ -127,36 +165,36 @@ public sealed partial class GameEngine
         Info($"===== 第 {State.TurnNumber} 回合：P{me.Index} =====");
 
         // 1. 正置阶段
-        State.Phase = Phase.Stand;
+        SetPhase(Phase.Stand);
         foreach (var c in me.StageCards)
-            c.Orientation = CardOrientation.Standing;
+            SetOrientation(c, CardOrientation.Standing);
         CheckTiming();
 
         // 2. 抽牌阶段
-        State.Phase = Phase.Draw;
+        SetPhase(Phase.Draw);
         DrawCard(me);
         CheckTiming();
 
         // 3. 伤害阶段
-        State.Phase = Phase.Clock;
+        SetPhase(Phase.Clock);
         ClockPhase(me);
 
         // 4. 主要阶段
-        State.Phase = Phase.Main;
+        SetPhase(Phase.Main);
         MainPhase(me);
 
         // 5. 名场面阶段
-        State.Phase = Phase.Climax;
+        SetPhase(Phase.Climax);
         ClimaxPhase(me);
 
         // 6. 攻击阶段（含再演步骤）
-        State.Phase = Phase.Attack;
+        SetPhase(Phase.Attack);
         AttackPhase(me);
-        State.Phase = Phase.Encore;
+        SetPhase(Phase.Encore);
         EncoreStep();
 
         // 7. 结束阶段
-        State.Phase = Phase.End;
+        SetPhase(Phase.End);
         EndPhase(me);
 
         State.ActivePlayer = 1 - State.ActivePlayer;
@@ -272,6 +310,9 @@ public sealed partial class GameEngine
         var b = me.Stage[(int)to];
         me.Stage[(int)to] = a;
         me.Stage[(int)from] = b;
+        Raise(new CardMovedEvent(me.Index, a.InstanceId, ZoneType.Stage, (int)from, from, ZoneType.Stage, (int)to, to, a.Orientation));
+        if (b != null)
+            Raise(new CardMovedEvent(me.Index, b.InstanceId, ZoneType.Stage, (int)to, to, ZoneType.Stage, (int)from, from, b.Orientation));
         Info($"P{me.Index} 移动 {a}：{from.ToChinese()} → {to.ToChinese()}" + (b != null ? $"（与 {b} 交换）" : ""));
     }
 
@@ -386,7 +427,7 @@ public sealed partial class GameEngine
         }
         foreach (var c in p.WaitingRoom.ToList())
             MoveTo(c, ZoneType.Deck, toBottom: true);
-        _rng.Shuffle(p.Deck);
+        Shuffle(p);
         p.PendingRefreshPoints++;
         Info($"P{p.Index} 洗牌重整（新牌库 {p.Deck.Count} 张）");
     }
@@ -405,7 +446,7 @@ public sealed partial class GameEngine
         State.Winner = winner;
         State.IsDraw = winner == null;
         State.EndReason = reason;
-        State.Phase = Phase.GameOver;
+        SetPhase(Phase.GameOver);
         Info($"对局结束：{reason}");
         throw new GameEndedSignal();
     }
@@ -430,6 +471,7 @@ public sealed partial class GameEngine
         p.Deck.RemoveAt(0);
         top.Zone = ZoneType.Resolution; // 临时，调用方会马上 MoveTo
         p.Resolution.Add(top);
+        Raise(new CardMovedEvent(p.Index, top.InstanceId, ZoneType.Deck, 0, null, ZoneType.Resolution, p.Resolution.Count - 1, null, top.Orientation));
         if (p.Deck.Count == 0 && !p.HasLost)
             Refresh(p);
         return top;
@@ -452,11 +494,13 @@ public sealed partial class GameEngine
     {
         var p = State.Players[card.Owner];
         if (p.Stage[(int)slot] != null) throw new InvalidOperationException("格子上已有角色");
+        var from = Where(card);
         RemoveFromCurrentZone(card);
         card.ResetTransient();
         card.Orientation = orientation;
         card.Zone = ZoneType.Stage;
         p.Stage[(int)slot] = card;
+        Raise(new CardMovedEvent(p.Index, card.InstanceId, from.Zone, from.Index, from.Slot, ZoneType.Stage, (int)slot, slot, orientation));
     }
 
     /// <summary>把卡移到列表区域的顶端（或底部）。离开舞台的卡清除状态与修正。</summary>
@@ -465,6 +509,7 @@ public sealed partial class GameEngine
         if (zone == ZoneType.Stage) throw new ArgumentException("上舞台用 PlaceOnStage");
         var p = State.Players[card.Owner];
         bool fromStage = card.Zone == ZoneType.Stage;
+        var from = Where(card);
         RemoveFromCurrentZone(card);
         if (fromStage) card.ResetTransient();
         card.Zone = zone;
@@ -478,6 +523,7 @@ public sealed partial class GameEngine
         {
             if (toBottom) list.Insert(0, card); else list.Add(card);
         }
+        Raise(new CardMovedEvent(p.Index, card.InstanceId, from.Zone, from.Index, from.Slot, zone, list.IndexOf(card), null, card.Orientation));
     }
 
     private void RemoveFromCurrentZone(CardInstance card)

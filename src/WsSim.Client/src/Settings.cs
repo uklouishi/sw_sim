@@ -14,6 +14,13 @@ public sealed class Settings
     public string PlayerDeck { get; set; } = "";
     public string OpponentDeck { get; set; } = "";
     public int AiDelayMs { get; set; } = 600;
+    /// <summary>动画速度：0 关闭、1 快、2 标准、3 慢。</summary>
+    public int AnimSpeed { get; set; } = 2;
+
+    /// <summary>动画时长倍数；0 表示不播动画。</summary>
+    public float AnimFactor => AnimSpeed switch { 0 => 0f, 1 => 0.55f, 3 => 1.6f, _ => 1f };
+
+    public static readonly string[] AnimSpeedNames = { "关闭", "快", "标准", "慢" };
 
     public static Settings Load()
     {
@@ -26,6 +33,7 @@ public sealed class Settings
             s.PlayerDeck = (string)cfg.GetValue("game", "player_deck", "");
             s.OpponentDeck = (string)cfg.GetValue("game", "opponent_deck", "");
             s.AiDelayMs = (int)cfg.GetValue("game", "ai_delay_ms", 600);
+            s.AnimSpeed = Math.Clamp((int)cfg.GetValue("game", "anim_speed", 2), 0, 3);
         }
         if (s.DevkitPath == "") s.DevkitPath = GuessDevkit() ?? "";
         if (s.CardImagePath == "") s.CardImagePath = GuessCardImages() ?? "";
@@ -40,6 +48,7 @@ public sealed class Settings
         cfg.SetValue("game", "player_deck", PlayerDeck);
         cfg.SetValue("game", "opponent_deck", OpponentDeck);
         cfg.SetValue("game", "ai_delay_ms", AiDelayMs);
+        cfg.SetValue("game", "anim_speed", AnimSpeed);
         cfg.Save(FilePath);
     }
 

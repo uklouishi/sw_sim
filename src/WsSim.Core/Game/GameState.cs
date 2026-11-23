@@ -4,7 +4,8 @@ namespace WsSim.Core.Game;
 
 public enum ZoneType { Deck, Hand, Clock, Level, Stock, WaitingRoom, Memory, ClimaxArea, Resolution, Stage }
 
-/// <summary>舞台格：前列 3 格（0–2），后列 2 格（3–4）。我方前列第 i 格正对对手前列第 i 格。</summary>
+/// <summary>舞台格：前列 3 格（0–2），后列 2 格（3–4），左右以该玩家自己的视角为准。
+/// 我方前列左格正对对手前列右格（综合规则 3.6.6），见 <see cref="StageSlots.Facing"/>。</summary>
 public enum StageSlot { FrontLeft = 0, FrontCenter = 1, FrontRight = 2, BackLeft = 3, BackRight = 4 }
 
 public enum CardOrientation { Standing, Rested, Reversed }
@@ -19,6 +20,9 @@ public static class StageSlots
     public static readonly StageSlot[] All = { StageSlot.FrontLeft, StageSlot.FrontCenter, StageSlot.FrontRight, StageSlot.BackLeft, StageSlot.BackRight };
     public static readonly StageSlot[] Front = { StageSlot.FrontLeft, StageSlot.FrontCenter, StageSlot.FrontRight };
     public static bool IsFront(this StageSlot s) => (int)s <= 2;
+    /// <summary>正对的对手前列格（综合规则 3.6.6：①↔③、②↔②、③↔①）。后列没有正对的格子。</summary>
+    public static StageSlot Facing(this StageSlot s) =>
+        s.IsFront() ? (StageSlot)(2 - (int)s) : throw new ArgumentException("后列没有正对的格子", nameof(s));
     public static string ToChinese(this StageSlot s) => s switch
     {
         StageSlot.FrontLeft => "前列左",
@@ -121,6 +125,15 @@ public sealed class PlayerState
     };
 
     /// <summary>等级区或伤害区是否有该颜色的卡（使用 1 级以上的卡和名场面的颜色条件）。</summary>
+    /// <summary>按 InstanceId 找这名玩家的卡（任何区域）。</summary>
+    public CardInstance? FindInstance(int instanceId)
+    {
+        foreach (var c in Stage) if (c != null && c.InstanceId == instanceId) return c;
+        foreach (var z in new[] { Deck, Hand, Clock, Level, Stock, WaitingRoom, Memory, ClimaxArea, Resolution })
+            foreach (var c in z) if (c.InstanceId == instanceId) return c;
+        return null;
+    }
+
     public bool HasColorInClockOrLevel(CardColor color) =>
         Clock.Any(c => c.Def.Color == color) || Level.Any(c => c.Def.Color == color);
 

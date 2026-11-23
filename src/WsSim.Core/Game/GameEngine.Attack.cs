@@ -39,7 +39,7 @@ public sealed partial class GameEngine
         {
             var a = me.Stage[(int)s];
             if (a == null || a.Orientation != CardOrientation.Standing) continue;
-            var facing = opp.Stage[(int)s];
+            var facing = opp.Stage[(int)s.Facing()];
             if (facing != null)
             {
                 opts.Add(new DecisionOption($"{a.Def.Name} 正面攻击 {facing.Def.Name}") { Slot = s, AttackType = AttackType.Front, CardInstanceId = a.InstanceId });
@@ -58,12 +58,13 @@ public sealed partial class GameEngine
     {
         var attacker = me.Stage[(int)slot] ?? throw new InvalidOperationException("攻击格没有角色");
         if (attacker.Orientation != CardOrientation.Standing) throw new InvalidOperationException("攻击角色不是正置");
-        var defender = opp.Stage[(int)slot];
+        var defender = opp.Stage[(int)slot.Facing()];
         if ((type == AttackType.Direct) != (defender == null)) throw new InvalidOperationException("攻击方式与对面是否有角色不符");
 
         // 宣告：横置攻击角色。
-        attacker.Orientation = CardOrientation.Rested;
+        SetOrientation(attacker, CardOrientation.Rested);
         State.AttacksThisTurn++;
+        Raise(new AttackDeclaredEvent(me.Index, slot, type, defender != null ? slot.Facing() : null));
         var ctx = new AttackContext
         {
             Attacker = attacker,
@@ -121,7 +122,7 @@ public sealed partial class GameEngine
         ReferenceEquals(me.Stage[(int)ctx.AttackerSlot], ctx.Attacker);
 
     private static bool IsDefenderInPlace(PlayerState opp, AttackContext ctx) =>
-        ctx.Defender != null && ReferenceEquals(opp.Stage[(int)ctx.AttackerSlot], ctx.Defender);
+        ctx.Defender != null && ReferenceEquals(opp.Stage[(int)ctx.AttackerSlot.Facing()], ctx.Defender);
 
     // ------------------------------------------------------------------ 判定
 
@@ -336,7 +337,7 @@ public sealed partial class GameEngine
 
     private void Reverse(CardInstance c)
     {
-        c.Orientation = CardOrientation.Reversed;
+        SetOrientation(c, CardOrientation.Reversed);
         Info($"{c} 倒置");
     }
 
