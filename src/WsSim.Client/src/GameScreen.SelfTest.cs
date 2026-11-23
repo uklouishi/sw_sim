@@ -22,6 +22,10 @@ public partial class GameScreen
         {
             foreach (var c in controls.Where(c => c.Highlight == CardHighlight.Selectable))
                 if (_multi.Count < d.MinPicks) OnClicked(c);
+            // 牌库里查看的卡等不在场上的卡：用选项按钮选。
+            for (int i = 0; i < d.Options.Count && _multi.Count < d.MinPicks; i++)
+                if (!_multi.Contains(i) && (d.Options[i].CardInstanceId is not int oid || _view?.FindCard(oid) is null or { IsHidden: true }))
+                    _multi.Add(i);
             if (_multi.Count != d.MinPicks) SelfTestFail(d, $"点卡后选中 {_multi.Count} 张，应为 {d.MinPicks}");
             Submit(_multi.OrderBy(x => x).ToArray());
             return;

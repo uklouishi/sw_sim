@@ -13,7 +13,7 @@ public partial class GameScreen
     {
         if (cv?.Def is not { } def) return;
         var lib = _main.Library;
-        _detailCard.Card = new CardView(cv.InstanceId, def, CardOrientation.Standing, cv.Power, cv.Soul);
+        _detailCard.Card = new CardView(cv.InstanceId, def, CardOrientation.Standing, cv.Power, cv.Soul) { Markers = cv.Markers };
         _detailCard.QueueRedraw();
         _detailName.Text = def.Name;
         var parts = new List<string> { def.Id, $"{Texts.ColorName(def.Color)}·{Texts.Type(def.Type)}" };
@@ -25,6 +25,8 @@ public partial class GameScreen
             parts.Add("没有卡图：" + problem);
         _detailInfo.Text = string.Join("\n", parts);
         var texts = Texts.GeneratedTexts(def).Concat(lib?.EffectTexts(def) ?? def.TextsEn);
+        if (cv.Gained.Count > 0 || cv.Markers > 0)
+            texts = texts.Prepend(string.Join("\n", cv.Gained.Prepend(cv.Markers > 0 ? $"下面有 {cv.Markers} 张标记" : null).Where(x => x != null)));
         _detailText.Text = string.Join("\n\n", texts);
     }
 

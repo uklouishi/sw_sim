@@ -210,7 +210,8 @@ public partial class GameScreen
         var b = new Button { Text = o.Label, Alignment = HorizontalAlignment.Left, ClipText = true, SizeFlagsHorizontal = SizeFlags.ExpandFill };
         if (o.IsPass) b.AddThemeColorOverride("font_color", UiTheme.TextDim);
         if (o.CardInstanceId is int id)
-            b.MouseEntered += () => ShowDetail(_view?.FindCard(id));
+            b.MouseEntered += () => ShowDetail(_view?.FindCard(id) is { IsHidden: false } v ? v
+                : o.Card is { } def ? new CardView(id, def, CardOrientation.Standing, def.Power, def.Soul) : null);
         return b;
     }
 

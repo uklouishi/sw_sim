@@ -172,6 +172,7 @@ public partial class GameScreen
             var c = Place(p.Stage[(int)s], BoardLayout.Stage(s, bottom), BoardLayout.StageCard, o, ZoneType.Stage, (int)s);
             c.Slot = s;
             c.ShowStats = true;
+            c.Badge = p.Stage[(int)s] is { Markers: > 0 } mk ? $"标记 {mk.Markers}" : null;
         }
 
         // 名场面区（横放）
