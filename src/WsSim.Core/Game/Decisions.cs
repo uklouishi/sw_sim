@@ -30,18 +30,28 @@ public enum DecisionType
     Encore,
     /// <summary>箭头（Choice）判定：选择加入手牌还是放到能量区。</summary>
     ChoiceDestination,
+    /// <summary>效果：从若干卡中选多张（个数见 MinPicks / MaxPicks）。</summary>
+    ChooseCards,
+    /// <summary>效果：多选一（MultipleChoiceQuestion 等）。</summary>
+    ChooseOption,
+    /// <summary>同时有多个【自】能力待处理：选先处理哪个。</summary>
+    ChooseAbility,
 }
 
-public enum MainActionKind { End, PlayCharacter, PlayEvent, Move }
+public enum MainActionKind { End, PlayCharacter, PlayEvent, Move, Activate }
 
 /// <summary>一个可选项。界面显示 Label；其余字段供 AI / 界面识别。</summary>
 public sealed record DecisionOption(string Label)
 {
     public int? CardInstanceId { get; init; }
+    /// <summary>选项对应的卡的定义（牌库里查看的卡等界面上看不到的卡，用来显示详情）。</summary>
+    public Cards.CardDefinition? Card { get; init; }
     public StageSlot? Slot { get; init; }
     public StageSlot? TargetSlot { get; init; }
     public MainActionKind? MainAction { get; init; }
     public AttackType? AttackType { get; init; }
+    /// <summary>发动【起】时：能力在这张卡的能力列表里的序号。</summary>
+    public int? AbilityIndex { get; init; }
     /// <summary>“不做 / 结束 / 跳过”类选项。</summary>
     public bool IsPass { get; init; }
 }

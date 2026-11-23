@@ -11,9 +11,18 @@ public sealed record CardView(int InstanceId, CardDefinition? Def, CardOrientati
 {
     public bool IsHidden => Def == null;
 
+    /// <summary>下面的标记张数（舞台上的角色）。</summary>
+    public int Markers { get; init; }
+    /// <summary>效果给的能力、特殊效果、特征（详情里显示）。</summary>
+    public IReadOnlyList<string> Gained { get; init; } = Array.Empty<string>();
+
     public static readonly CardView Hidden = new(-1, null, CardOrientation.Standing, 0, 0);
 
-    public static CardView Of(CardInstance c) => new(c.InstanceId, c.Def, c.Orientation, c.Power, c.Soul);
+    public static CardView Of(CardInstance c) => new(c.InstanceId, c.Def, c.Orientation, c.Power, c.Soul)
+    {
+        Markers = c.Markers.Count,
+        Gained = c.Zone == ZoneType.Stage ? c.GainedDescriptions().ToArray() : Array.Empty<string>(),
+    };
 }
 
 public sealed record PlayerView(

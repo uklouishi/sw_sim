@@ -19,6 +19,9 @@ public partial class Main : Control
     public CardLibrary? Library { get; private set; }
     /// <summary>自检：由程序模拟点击，代替玩家做前 N 个选择（命令行 --selftest N）。</summary>
     public int SelfTestSteps { get; private set; }
+    /// <summary>命令行指定了自检或动画速度（这时不把动画速度存进设置）。</summary>
+    public bool SelfTestOrShot => SelfTestSteps > 0 || AnimFromArgs;
+    public bool AnimFromArgs => _args.ContainsKey("anim");
 
     private Node? _screen;
     private readonly Dictionary<string, string> _args = new();
@@ -42,6 +45,8 @@ public partial class Main : Control
         if (_args.TryGetValue("devkit", out var dk)) Settings.DevkitPath = dk;
         if (_args.TryGetValue("images", out var im)) Settings.CardImagePath = im;
         if (_args.TryGetValue("ai-delay", out var ad) && int.TryParse(ad, out var adMs)) Settings.AiDelayMs = adMs;
+        if (_args.TryGetValue("anim", out var an) && int.TryParse(an, out var anv)) Settings.AnimSpeed = Math.Clamp(anv, 0, 3);
+        Assets.Reset(Path.Combine(Settings.DevkitPath, "assets"));
         if (_args.TryGetValue("selftest", out var st)) SelfTestSteps = int.TryParse(st, out var k) ? k : int.MaxValue;
 
         var menu = new MenuScreen(this);
@@ -50,7 +55,17 @@ public partial class Main : Control
         if (_args.ContainsKey("shot"))
         {
             float delay = _args.TryGetValue("shot-delay", out var d) && float.TryParse(d, out var f) ? f : 3f;
-            GetTree().CreateTimer(delay).Timeout += TakeShotAndQuit;
+            if (_args.TryGetValue("shot-count", out var sc) && int.TryParse(sc, out var count) && count > 1)
+            {
+                // 连拍（检查动画用）：从 delay 秒开始，每隔 --shot-every 秒拍一张，文件名加序号。
+                float every = _args.TryGetValue("shot-every", out var se) && float.TryParse(se, out var e) ? e : 0.1f;
+                for (int i = 0; i < count; i++)
+                {
+                    int k = i;
+                    GetTree().CreateTimer(delay + every * i).Timeout += () => TakeShot(k, k == count - 1);
+                }
+            }
+            else GetTree().CreateTimer(delay).Timeout += TakeShotAndQuit;
         }
         if (_args.ContainsKey("auto") || _args.ContainsKey("play"))
             menu.AutoStart(spectate: _args.ContainsKey("auto"),
@@ -75,6 +90,13 @@ public partial class Main : Control
     public void StartGame(GameConfig config) => ShowScreen(new GameScreen(this, config));
 
     public void BackToMenu() => ShowScreen(new MenuScreen(this));
+
+    private void TakeShot(int k, bool quit)
+    {
+        var path = _args["shot"].Replace(".png", $"_{k:000}.png");
+        GetViewport().GetTexture().GetImage().SavePng(path);
+        if (quit) GetTree().Quit();
+    }
 
     private void TakeShotAndQuit()
     {

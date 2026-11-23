@@ -9,3 +9,5 @@ TestResults/
 ws-devkit/
 # Godot
 .godot/
+# Godot 自动生成的脚本 uid（各人本机生成，不进仓库，避免拉取时和本地生成的文件冲突）
+*.uid

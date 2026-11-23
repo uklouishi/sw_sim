@@ -18,8 +18,9 @@ public class FullGameTests
         {
             foreach (var p in engine.State.Players)
             {
-                Assert.Equal(50, p.TotalCards);
-                if (d.Type != DecisionType.LevelUp)
+                Assert.Equal(50, engine.State.TotalCardsOf(p.Index));
+                // 效果处理途中伤害区可以暂时有 7 张以上（升级在下一个规则处理时点），只在阶段性的选择时检查。
+                if (d.Type is DecisionType.MainAction or DecisionType.AttackDeclaration or DecisionType.Clock or DecisionType.Climax)
                     Assert.True(p.Clock.Count < 7, $"P{p.Index} 伤害区 {p.Clock.Count} 张却没有升级");
                 Assert.True(p.PlayerLevel < 4);
                 for (int i = 0; i < p.Stage.Length; i++)

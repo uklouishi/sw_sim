@@ -1,4 +1,5 @@
 using WsSim.Core.Cards;
+using WsSim.Core.Effects;
 using WsSim.Core.Randomness;
 
 namespace WsSim.Core.Game;
@@ -16,6 +17,8 @@ public sealed class GameOptions
     public int MaxTurns { get; init; } = 500;
     /// <summary>安全上限：一个主要阶段内最多的行动数，超过后自动结束主要阶段。</summary>
     public int MaxMainActionsPerTurn { get; init; } = 200;
+    /// <summary>执行卡片效果脚本。关掉就是 P1 的纯规则引擎（只有判定图示、助太刀数值等）。</summary>
+    public bool EnableEffects { get; init; } = true;
 }
 
 public sealed record GameResult(int? Winner, bool IsDraw, int Turns, string Reason);
@@ -41,6 +44,49 @@ public sealed partial class GameEngine
 
     /// <summary>每次向玩家提问前触发（可用于界面刷新、联机发送状态哈希）。</summary>
     public event Action<Decision>? DecisionRequested;
+
+    /// <summary>局面每一步变化（卡移动、方向改变、洗牌、攻击宣告、阶段开始）后触发，在引擎线程上同步调用。</summary>
+    public event Action<GameEvent>? EventRaised;
+
+    private void Raise(GameEvent e) => EventRaised?.Invoke(e);
+
+    private void SetPhase(Phase phase)
+    {
+        State.Phase = phase;
+        Raise(new PhaseEvent(State.ActivePlayer, State.TurnNumber, phase));
+    }
+
+    private void SetOrientation(CardInstance c, CardOrientation o)
+    {
+        if (c.Orientation == o) return;
+        var from = c.Orientation;
+        c.Orientation = o;
+        if (c.Zone == ZoneType.Stage && State.Players[c.Owner].SlotOf(c) is { } slot)
+            Raise(new CardOrientationEvent(c.Owner, c.InstanceId, slot, from, o));
+    }
+
+    private void Shuffle(PlayerState p)
+    {
+        _rng.Shuffle(p.Deck);
+        Raise(new ShuffleEvent(p.Index));
+    }
+
+    /// <summary>卡现在所在的位置（区域、列表序号、舞台格）。</summary>
+    private (ZoneType Zone, int Index, StageSlot? Slot) Where(CardInstance c)
+    {
+        var p = State.Players[c.Owner];
+        if (c.Zone == ZoneType.Marker)
+        {
+            var host = c.MarkerHost;
+            return (ZoneType.Marker, host?.Markers.IndexOf(c) ?? -1, host != null ? State.Players[host.Owner].SlotOf(host) : null);
+        }
+        if (c.Zone == ZoneType.Stage)
+        {
+            var s = p.SlotOf(c);
+            return (ZoneType.Stage, s is { } x ? (int)x : -1, s);
+        }
+        return (c.Zone, p.ZoneList(c.Zone).IndexOf(c), null);
+    }
 
     public GameEngine(Deck deck0, Deck deck1, IPlayerAgent agent0, IPlayerAgent agent1, ulong seed, GameOptions? options = null)
     {
@@ -84,9 +130,9 @@ public sealed partial class GameEngine
 
     internal void Setup()
     {
-        State.Phase = Phase.Setup;
+        SetPhase(Phase.Setup);
         foreach (var p in State.Players)
-            _rng.Shuffle(p.Deck);
+            Shuffle(p);
 
         // 猜拳：胜者由随机数决定，胜者选择先攻或后攻。
         int rpsWinner = _rng.NextInt(2);
@@ -127,39 +173,48 @@ public sealed partial class GameEngine
         Info($"===== 第 {State.TurnNumber} 回合：P{me.Index} =====");
 
         // 1. 正置阶段
-        State.Phase = Phase.Stand;
+        StartPhase(Phase.Stand);
         foreach (var c in me.StageCards)
-            c.Orientation = CardOrientation.Standing;
+            if (!c.Has("CannotStand") && !c.Has("DontStandNext"))
+                SetOrientation(c, CardOrientation.Standing);
         CheckTiming();
 
         // 2. 抽牌阶段
-        State.Phase = Phase.Draw;
+        StartPhase(Phase.Draw);
         DrawCard(me);
         CheckTiming();
 
         // 3. 伤害阶段
-        State.Phase = Phase.Clock;
+        StartPhase(Phase.Clock);
         ClockPhase(me);
 
         // 4. 主要阶段
-        State.Phase = Phase.Main;
+        StartPhase(Phase.Main);
         MainPhase(me);
 
         // 5. 名场面阶段
-        State.Phase = Phase.Climax;
+        StartPhase(Phase.Climax);
         ClimaxPhase(me);
 
         // 6. 攻击阶段（含再演步骤）
-        State.Phase = Phase.Attack;
+        StartPhase(Phase.Attack);
         AttackPhase(me);
-        State.Phase = Phase.Encore;
+        StartPhase(Phase.Encore);
         EncoreStep();
 
         // 7. 结束阶段
-        State.Phase = Phase.End;
+        StartPhase(Phase.End);
         EndPhase(me);
 
         State.ActivePlayer = 1 - State.ActivePlayer;
+    }
+
+    /// <summary>进入阶段：发阶段事件，触发“……阶段开始时”的【自】并处理。</summary>
+    private void StartPhase(Phase phase)
+    {
+        SetPhase(phase);
+        FirePhaseStart(phase);
+        CheckTiming();
     }
 
     internal void ClockPhase(PlayerState me)
@@ -197,6 +252,10 @@ public sealed partial class GameEngine
                 case MainActionKind.Move:
                     MoveOnStage(me, o.Slot!.Value, o.TargetSlot!.Value);
                     break;
+                case MainActionKind.Activate:
+                    if (me.FindInstance(o.CardInstanceId!.Value) is { } src)
+                        ActivateAbility(src, o.AbilityIndex!.Value);
+                    break;
             }
             CheckTiming();
         }
@@ -205,6 +264,7 @@ public sealed partial class GameEngine
 
     internal List<DecisionOption> BuildMainActions(PlayerState me)
     {
+        UpdateContinuous();
         var opts = new List<DecisionOption>();
         foreach (var c in me.Hand)
         {
@@ -212,17 +272,21 @@ public sealed partial class GameEngine
                 foreach (var s in StageSlots.All)
                     opts.Add(new DecisionOption($"使用 {c.Def.Name} 到{s.ToChinese()}")
                     { MainAction = MainActionKind.PlayCharacter, CardInstanceId = c.InstanceId, Slot = s });
-            else if (c.Def.IsEvent && CanPlay(me, c))
+            else if (c.Def.IsEvent && CanPlay(me, c) && !ScriptCache.Get(c.Def).Flags.Any(f => f.Key == "counter"))
                 opts.Add(new DecisionOption($"使用事件 {c.Def.Name}") { MainAction = MainActionKind.PlayEvent, CardInstanceId = c.InstanceId });
         }
+        foreach (var c in me.StageCards.Concat(me.Memory).ToList())
+            foreach (var (idx, ab) in UsableActs(c))
+                opts.Add(new DecisionOption($"发动 {c.Def.Name} 的【起】" + (ab.Text != null ? $"：{Short(ab.Text)}" : $"（{DescribeCost(ab.HeaderArgs)}）"))
+                { MainAction = MainActionKind.Activate, CardInstanceId = c.InstanceId, AbilityIndex = idx });
         foreach (var from in StageSlots.All)
         {
-            if (me.Stage[(int)from] == null) continue;
+            if (me.Stage[(int)from] == null || me.Stage[(int)from]!.Has("CannotMove")) continue;
             foreach (var to in StageSlots.All)
             {
                 if (to == from) continue;
                 // 两格都有角色时是交换，只列一次。
-                if (me.Stage[(int)to] != null && to < from) continue;
+                if (me.Stage[(int)to] != null && (to < from || me.Stage[(int)to]!.Has("CannotMove"))) continue;
                 opts.Add(new DecisionOption($"移动 {from.ToChinese()} → {to.ToChinese()}")
                 { MainAction = MainActionKind.Move, Slot = from, TargetSlot = to });
             }
@@ -235,18 +299,21 @@ public sealed partial class GameEngine
     public bool CanPlay(PlayerState me, CardInstance c)
     {
         var d = c.Def;
+        bool ignoreColor = c.Has("IgnoreColorRequirement");
         if (d.IsClimax)
-            return me.HasColorInClockOrLevel(d.Color);
-        if (d.Level > me.PlayerLevel) return false;
-        if (d.Cost > me.Stock.Count) return false;
-        if (d.Level >= 1 && !me.HasColorInClockOrLevel(d.Color)) return false;
+            return (ignoreColor || me.HasColorInClockOrLevel(d.Color)) && !me.StageCards.Any(x => x.Has("CannotPlayClimax"));
+        if (c.Has("CannotBePlayed")) return false;
+        if (c.Level > me.PlayerLevel) return false;
+        if (c.Cost > me.Stock.Count) return false;
+        if (c.Level >= 1 && !ignoreColor && !me.HasColorInClockOrLevel(d.Color)) return false;
+        if (d.IsEvent && !EventRequirementMet(me, c)) return false;
         return true;
     }
 
     private void PlayCharacter(PlayerState me, CardInstance card, StageSlot slot)
     {
         if (!card.Def.IsCharacter || !CanPlay(me, card)) throw new InvalidOperationException($"不能使用 {card}");
-        PayStock(me, card.Def.Cost);
+        PayStock(me, card.Cost);
         var old = me.Stage[(int)slot];
         if (old != null)
         {
@@ -255,15 +322,17 @@ public sealed partial class GameEngine
         }
         PlaceOnStage(card, slot, CardOrientation.Standing);
         Info($"P{me.Index} 使用 {card} 到{slot.ToChinese()}");
+        OnCardPlayed(card);
     }
 
     private void PlayEvent(PlayerState me, CardInstance card)
     {
         if (!card.Def.IsEvent || !CanPlay(me, card)) throw new InvalidOperationException($"不能使用 {card}");
-        PayStock(me, card.Def.Cost);
+        PayStock(me, card.Cost);
         MoveTo(card, ZoneType.Resolution);
-        Info($"P{me.Index} 使用事件 {card}（P1 不处理效果）");
-        MoveTo(card, ZoneType.WaitingRoom);
+        Info($"P{me.Index} 使用事件 {card}");
+        if (EffectsEnabled) ResolveEvent(me, card);
+        if (card.Zone == ZoneType.Resolution) MoveTo(card, ZoneType.WaitingRoom);
     }
 
     private void MoveOnStage(PlayerState me, StageSlot from, StageSlot to)
@@ -272,6 +341,11 @@ public sealed partial class GameEngine
         var b = me.Stage[(int)to];
         me.Stage[(int)to] = a;
         me.Stage[(int)from] = b;
+        a.LastSlot = to;
+        if (b != null) b.LastSlot = from;
+        Raise(new CardMovedEvent(me.Index, a.InstanceId, ZoneType.Stage, (int)from, from, ZoneType.Stage, (int)to, to, a.Orientation));
+        if (b != null)
+            Raise(new CardMovedEvent(me.Index, b.InstanceId, ZoneType.Stage, (int)to, to, ZoneType.Stage, (int)from, from, b.Orientation));
         Info($"P{me.Index} 移动 {a}：{from.ToChinese()} → {to.ToChinese()}" + (b != null ? $"（与 {b} 交换）" : ""));
     }
 
@@ -286,6 +360,7 @@ public sealed partial class GameEngine
         var card = cands[ans[0]];
         MoveTo(card, ZoneType.ClimaxArea);
         Info($"P{me.Index} 使用名场面 {card}");
+        OnClimaxPlayed(card);
         CheckTiming();
     }
 
@@ -304,13 +379,9 @@ public sealed partial class GameEngine
         foreach (var p in new[] { State.Active, State.NonActive })
             foreach (var cx in p.ClimaxArea.ToList())
                 MoveTo(cx, ZoneType.WaitingRoom);
-        foreach (var p in State.Players)
-            foreach (var c in p.StageCards)
-            {
-                c.PowerModifierUntilEndOfTurn = 0;
-                c.SoulModifierUntilEndOfTurn = 0;
-            }
         CheckTiming();
+        ExpireModifiers();
+        UpdateContinuous();
     }
 
     // ------------------------------------------------------------------ 规则处理
@@ -320,6 +391,15 @@ public sealed partial class GameEngine
     /// 回合玩家先处理。有人败北时结束对局。
     /// </summary>
     internal void CheckTiming()
+    {
+        do
+        {
+            RuleProcess();
+        } while (ResolveOnePending());
+        UpdateContinuous();
+    }
+
+    private void RuleProcess()
     {
         bool changed;
         do
@@ -374,6 +454,8 @@ public sealed partial class GameEngine
         Info($"P{p.Index} 升级到 {p.PlayerLevel} 级（{chosen} 放到等级区）");
         if (p.PlayerLevel >= Options.LosingLevel)
             Lose(p, $"等级达到 {Options.LosingLevel}");
+        FireWatchers(p.Index, "onlevelup", new TriggerInfo { Other = chosen });
+        FireWatchers(1 - p.Index, "onopponentlevelup", new TriggerInfo { Other = chosen });
     }
 
     /// <summary>洗牌重整：休息室全部洗切成为新牌库，之后受到 1 点重整伤害。休息室也没有卡则败北。</summary>
@@ -386,7 +468,7 @@ public sealed partial class GameEngine
         }
         foreach (var c in p.WaitingRoom.ToList())
             MoveTo(c, ZoneType.Deck, toBottom: true);
-        _rng.Shuffle(p.Deck);
+        Shuffle(p);
         p.PendingRefreshPoints++;
         Info($"P{p.Index} 洗牌重整（新牌库 {p.Deck.Count} 张）");
     }
@@ -405,7 +487,7 @@ public sealed partial class GameEngine
         State.Winner = winner;
         State.IsDraw = winner == null;
         State.EndReason = reason;
-        State.Phase = Phase.GameOver;
+        SetPhase(Phase.GameOver);
         Info($"对局结束：{reason}");
         throw new GameEndedSignal();
     }
@@ -430,6 +512,7 @@ public sealed partial class GameEngine
         p.Deck.RemoveAt(0);
         top.Zone = ZoneType.Resolution; // 临时，调用方会马上 MoveTo
         p.Resolution.Add(top);
+        Raise(new CardMovedEvent(p.Index, top.InstanceId, ZoneType.Deck, 0, null, ZoneType.Resolution, p.Resolution.Count - 1, null, top.Orientation));
         if (p.Deck.Count == 0 && !p.HasLost)
             Refresh(p);
         return top;
@@ -452,11 +535,15 @@ public sealed partial class GameEngine
     {
         var p = State.Players[card.Owner];
         if (p.Stage[(int)slot] != null) throw new InvalidOperationException("格子上已有角色");
+        var from = Where(card);
         RemoveFromCurrentZone(card);
         card.ResetTransient();
         card.Orientation = orientation;
         card.Zone = ZoneType.Stage;
+        card.LastSlot = slot;
+        card.EnteredStageTurn = State.TurnNumber;
         p.Stage[(int)slot] = card;
+        Raise(new CardMovedEvent(p.Index, card.InstanceId, from.Zone, from.Index, from.Slot, ZoneType.Stage, (int)slot, slot, orientation));
     }
 
     /// <summary>把卡移到列表区域的顶端（或底部）。离开舞台的卡清除状态与修正。</summary>
@@ -465,8 +552,15 @@ public sealed partial class GameEngine
         if (zone == ZoneType.Stage) throw new ArgumentException("上舞台用 PlaceOnStage");
         var p = State.Players[card.Owner];
         bool fromStage = card.Zone == ZoneType.Stage;
+        var from = Where(card);
+        List<(Ability, CardInstance)>? abilities = fromStage && EffectsEnabled ? card.Abilities.ToList() : null;
         RemoveFromCurrentZone(card);
-        if (fromStage) card.ResetTransient();
+        if (fromStage && card.Markers.Count > 0)
+        {
+            // 标记跟着离开：放到各自主人的休息室。
+            foreach (var m in card.Markers.ToList()) MoveTo(m, ZoneType.WaitingRoom);
+        }
+        card.ResetTransient();
         card.Zone = zone;
         var list = p.ZoneList(zone);
         // 牌库 Deck[0] 是顶；其他区域末尾是顶。
@@ -478,6 +572,8 @@ public sealed partial class GameEngine
         {
             if (toBottom) list.Insert(0, card); else list.Add(card);
         }
+        Raise(new CardMovedEvent(p.Index, card.InstanceId, from.Zone, from.Index, from.Slot, zone, list.IndexOf(card), null, card.Orientation));
+        if (abilities != null && from.Slot is { } fromSlot) OnLeftStage(card, zone, fromSlot, abilities);
     }
 
     private void RemoveFromCurrentZone(CardInstance card)
@@ -487,6 +583,11 @@ public sealed partial class GameEngine
         {
             var slot = p.SlotOf(card) ?? throw new InvalidOperationException($"{card} 不在舞台上");
             p.Stage[(int)slot] = null;
+        }
+        else if (card.Zone == ZoneType.Marker)
+        {
+            card.MarkerHost?.Markers.Remove(card);
+            card.MarkerHost = null;
         }
         else if (!p.ZoneList(card.Zone).Remove(card))
         {
@@ -500,10 +601,11 @@ public sealed partial class GameEngine
     // ------------------------------------------------------------------ 选择
 
     private static DecisionOption CardOption(CardInstance c) =>
-        new($"{c.Def.Name}（{c.Def.Id}）") { CardInstanceId = c.InstanceId };
+        new($"{c.Def.Name}（{c.Def.Id}）") { CardInstanceId = c.InstanceId, Card = c.Def };
 
     private int[] Ask(int player, DecisionType type, string prompt, IReadOnlyList<DecisionOption> options, int min, int max)
     {
+        UpdateContinuous();
         var d = new Decision(player, type, prompt, options, min, max) { Sequence = _decisionSeq++ };
         DecisionRequested?.Invoke(d);
         var answer = _agents[player].Decide(State, d);

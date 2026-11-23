@@ -13,6 +13,14 @@ public sealed record StateUpdated(GameView View, Decision Decision) : HostEvent(
 /// <summary>轮到由界面操作的玩家做选择。用 <see cref="GameHost.Submit"/> 回答。</summary>
 public sealed record DecisionRequired(GameView View, Decision Decision) : HostEvent(View);
 
+/// <summary>
+/// 局面变了一步（卡移动、方向改变、洗牌、攻击宣告、阶段开始），只在 <see cref="GameHostOptions.StepEvents"/> 时发出。
+/// <see cref="Event"/> 已按视角处理：两端都看不到的卡，<see cref="CardMovedEvent.InstanceId"/> 为 -1。
+/// <see cref="Card"/> 是移动的那张卡（两端都看不到时为 <see cref="CardView.Hidden"/>），
+/// <see cref="FromVisible"/> / <see cref="ToVisible"/> 表示移动前 / 后这名玩家能否看到正面（界面据此决定是否翻面）。
+/// </summary>
+public sealed record BoardChanged(GameView View, GameEvent Event, CardView? Card, bool FromVisible, bool ToVisible) : HostEvent(View);
+
 public sealed record GameFinished(GameView View, GameResult Result) : HostEvent(View);
 
 /// <summary>引擎抛出了异常（规则实现的 bug）。对局无法继续。</summary>
@@ -27,6 +35,8 @@ public sealed class GameHostOptions
     /// <summary>AI 每次做选择前等待的时间，让玩家看得清对手的操作。</summary>
     public TimeSpan AiDelay { get; init; } = TimeSpan.Zero;
     public GameOptions? Rules { get; init; }
+    /// <summary>每一步变化都发 <see cref="BoardChanged"/>（界面播动画用）。</summary>
+    public bool StepEvents { get; init; }
 }
 
 /// <summary>
@@ -55,6 +65,39 @@ public sealed class GameHost : IDisposable
         _options = options ?? new GameHostOptions();
         _engine = new GameEngine(deck0, deck1,
             new Seat(this, agent0), new Seat(this, agent1), seed, _options.Rules);
+        if (_options.StepEvents) _engine.EventRaised += OnEngineEvent;
+    }
+
+    /// <summary>这名视角的玩家能否看到某区域里卡的正面。</summary>
+    private bool CanSee(int owner, ZoneType zone) => zone switch
+    {
+        ZoneType.Deck => false,
+        ZoneType.Hand => _options.RevealAll || owner == _options.Viewer,
+        ZoneType.Stock => _options.RevealAll,
+        _ => true,
+    };
+
+    private void OnEngineEvent(GameEvent e)
+    {
+        if (_cts.IsCancellationRequested) return;
+        CardView? card = null;
+        bool fromVisible = true, toVisible = true;
+        if (e is CardMovedEvent m)
+        {
+            fromVisible = CanSee(m.Owner, m.From);
+            toVisible = CanSee(m.Owner, m.To);
+            var inst = _engine.State.Players[m.Owner].FindInstance(m.InstanceId);
+            if (fromVisible || toVisible)
+            {
+                card = inst != null ? CardView.Of(inst) : null;
+            }
+            else
+            {
+                card = CardView.Hidden;
+                e = m with { InstanceId = -1 };
+            }
+        }
+        _events.Enqueue(new BoardChanged(Snapshot(), e, card, fromVisible, toVisible));
     }
 
     public ulong Seed => _engine.Seed;

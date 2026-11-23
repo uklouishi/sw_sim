@@ -188,6 +188,30 @@ public class RulesTests
     }
 
     [Fact]
+    public void Facing_LeftFacesOpponentRight()
+    {
+        // 综合规则 3.6.6：我方①（左）正对对手③（右），②对②。
+        Assert.Equal(StageSlot.FrontRight, StageSlot.FrontLeft.Facing());
+        Assert.Equal(StageSlot.FrontCenter, StageSlot.FrontCenter.Facing());
+        Assert.Equal(StageSlot.FrontLeft, StageSlot.FrontRight.Facing());
+
+        var atk = Make.Char(power: 5000, name: "攻击者");
+        var def = Make.Char(power: 1000, name: "防守者");
+        var deck0 = new List<CardDefinition> { atk };
+        deck0.AddRange(Filler());
+        var deck1 = new List<CardDefinition> { def };
+        deck1.AddRange(Filler());
+        var b = new Board(deck0, deck1);
+        b.PutOnStage(b.P0, d => d == atk, StageSlot.FrontLeft);
+        b.PutOnStage(b.P1, d => d == def, StageSlot.FrontRight);
+        var opts = b.Engine.BuildAttackOptions(b.P0, b.P1);
+        Assert.Contains(opts, o => o.Slot == StageSlot.FrontLeft && o.AttackType == AttackType.Front);
+        Assert.DoesNotContain(opts, o => o.AttackType == AttackType.Direct);
+        b.Step(() => b.Engine.PerformAttack(b.P0, b.P1, StageSlot.FrontLeft, AttackType.Front));
+        Assert.Equal(CardOrientation.Reversed, b.P1.Stage[(int)StageSlot.FrontRight]!.Orientation);
+    }
+
+    [Fact]
     public void FrontAttack_HigherPowerReversesDefender()
     {
         var b = AttackBoard(5000, 3000);

@@ -102,7 +102,7 @@ public sealed class SimpleAgent : IPlayerAgent
                     var o = d.Options[i];
                     if (o.IsPass) continue;
                     var a = me.Stage[(int)o.Slot!.Value]!;
-                    var def = opp.Stage[(int)o.Slot.Value];
+                    var def = opp.Stage[(int)o.Slot.Value.Facing()];
                     int score = o.AttackType switch
                     {
                         AttackType.Direct => 1000,
@@ -133,6 +133,10 @@ public sealed class SimpleAgent : IPlayerAgent
                     .ThenBy(i => Card(d.Options[i])!.Def.Level)
                     .Take(d.MinPicks).OrderBy(i => i).ToArray();
 
+            case DecisionType.ChooseCards:
+                // 多选：“最多 N 张”的效果多半是好处，选满；费用的 min = max。
+                return Enumerable.Range(0, d.MaxPicks).ToArray();
+
             default:
                 // 判定效果等：选第一个非“不做”的选项。
                 for (int i = 0; i < d.Options.Count; i++)
@@ -156,7 +160,11 @@ public sealed class SimpleAgent : IPlayerAgent
                 foreach (var c in z)
                     if (c.InstanceId == id) return c;
             foreach (var c in p.Stage)
-                if (c != null && c.InstanceId == id) return c;
+            {
+                if (c == null) continue;
+                if (c.InstanceId == id) return c;
+                foreach (var m in c.Markers) if (m.InstanceId == id) return m;
+            }
         }
         return null;
     }

@@ -144,4 +144,63 @@ public class GameHostTests
             + v.Me.Stock.Count + v.Me.WaitingRoom.Count + v.Me.Memory.Count + v.Me.ClimaxArea.Count + v.Me.Resolution.Count
             + v.Me.Stage.Count(c => c != null));
     }
+
+    [Fact]
+    public void StepEvents_SameResult_EveryMoveMatchesSnapshotAndHidesUnseenCards()
+    {
+        const ulong seed = 777;
+        using var plain = new GameHost(TestData.Sao, TestData.Nikke, null, new SimpleAgent(), seed);
+        plain.Start();
+        var (f1, _) = Pump(plain);
+
+        using var host = new GameHost(TestData.Sao, TestData.Nikke, null, new SimpleAgent(), seed, new GameHostOptions { StepEvents = true });
+        host.Start();
+        var (f2, events) = Pump(host);
+        Assert.Equal(f1.Result, f2.Result);
+
+        var steps = events.OfType<BoardChanged>().ToList();
+        Assert.True(steps.Count > 100);
+        Assert.Contains(steps, s => s.Event is ShuffleEvent);
+        Assert.Contains(steps, s => s.Event is AttackDeclaredEvent);
+        Assert.Contains(steps, s => s.Event is CardOrientationEvent { To: CardOrientation.Rested });
+        Assert.Contains(steps, s => s.Event is PhaseEvent { Phase: Phase.Attack });
+
+        foreach (var s in steps)
+        {
+            if (s.Event is not CardMovedEvent m) continue;
+            var p = s.View.Players[m.Owner];
+            // 快照是移动之后的局面：卡在目标位置。
+            if (m.To == ZoneType.Stage)
+            {
+                Assert.NotNull(p.Stage[(int)m.ToSlot!.Value]);
+                Assert.Equal(m.InstanceId, p.Stage[(int)m.ToSlot!.Value]!.InstanceId);
+            }
+            else if (m.To != ZoneType.Deck)
+            {
+                var list = Zone(p, m.To);
+                Assert.InRange(m.ToIndex, 0, list.Count - 1);
+                if (s.ToVisible) Assert.Equal(m.InstanceId, list[m.ToIndex].InstanceId);
+            }
+            // 两端都看不到（对手抽牌、牌库进能量区）就不能带 InstanceId 和卡面。
+            if (!s.FromVisible && !s.ToVisible)
+            {
+                Assert.Equal(-1, m.InstanceId);
+                Assert.True(s.Card!.IsHidden);
+            }
+            if (m.Owner == 1 && m.From == ZoneType.Deck && m.To == ZoneType.Hand) Assert.Equal(-1, m.InstanceId);
+        }
+    }
+
+    private static IReadOnlyList<CardView> Zone(PlayerView p, ZoneType z) => z switch
+    {
+        ZoneType.Hand => p.Hand,
+        ZoneType.Clock => p.Clock,
+        ZoneType.Level => p.Level,
+        ZoneType.Stock => p.Stock,
+        ZoneType.WaitingRoom => p.WaitingRoom,
+        ZoneType.Memory => p.Memory,
+        ZoneType.ClimaxArea => p.ClimaxArea,
+        ZoneType.Resolution => p.Resolution,
+        _ => throw new ArgumentException(z.ToString()),
+    };
 }
