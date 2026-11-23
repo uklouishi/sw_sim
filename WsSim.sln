@@ -11,6 +11,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{16C84E01
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WsSim.Core.Tests", "tests\WsSim.Core.Tests\WsSim.Core.Tests.csproj", "{C135651B-2B54-408E-85C3-43CE21F7CE8A}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WsSim.Client", "src\WsSim.Client\WsSim.Client.csproj", "{0A64A9C5-157C-44E6-9F2B-A6B988A5A943}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -28,9 +30,14 @@ Global
 		{C135651B-2B54-408E-85C3-43CE21F7CE8A}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C135651B-2B54-408E-85C3-43CE21F7CE8A}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C135651B-2B54-408E-85C3-43CE21F7CE8A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0A64A9C5-157C-44E6-9F2B-A6B988A5A943}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A64A9C5-157C-44E6-9F2B-A6B988A5A943}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0A64A9C5-157C-44E6-9F2B-A6B988A5A943}.Release|Any CPU.ActiveCfg = Debug|Any CPU
+		{0A64A9C5-157C-44E6-9F2B-A6B988A5A943}.Release|Any CPU.Build.0 = Debug|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{AA0781CF-0065-426F-BED5-D35491D6658C} = {8E08F1C4-E0E6-474F-AD45-38C176562127}
 		{C135651B-2B54-408E-85C3-43CE21F7CE8A} = {16C84E01-53BD-49FA-897C-65A6B29B9380}
+		{0A64A9C5-157C-44E6-9F2B-A6B988A5A943} = {8E08F1C4-E0E6-474F-AD45-38C176562127}
 	EndGlobalSection
 EndGlobal

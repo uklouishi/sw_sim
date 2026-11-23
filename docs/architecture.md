@@ -19,6 +19,16 @@
 
 洗牌重整 → 升级 → 重整伤害 → 败北判定，循环到没有可处理的事项为止，回合玩家先。牌库在任何时候变成 0 张会立即洗牌重整，重整伤害留到下一个规则处理时点。
 
-## P2 预留
+## 给界面用：GameHost（Hosting/）
 
-卡片效果脚本在 P2 接入：`CardDefinition.ScriptExpanded` 是输入；触发时机（登场、攻击、判定、倒置等）将在引擎对应位置发出事件。
+`GameEngine.Run()` 是同步的、会阻塞在 `IPlayerAgent.Decide` 上，所以客户端用 `GameHost` 在后台线程运行它：
+
+- 每个座位传一个 agent；传 `null` 表示由界面操作。问到界面座位时，`GameHost` 发出 `DecisionRequired` 事件并阻塞，界面调用 `Submit(序号, 回答)` 后继续。回答不合法时 `Submit` 返回 false，不改变任何东西。
+- 问到 AI 座位时先发 `StateUpdated`，可选等待 `AiDelay`（让玩家看清对手的操作）。
+- 每个事件带一个 `GameView`：某一玩家视角的不可变快照，在引擎线程上、引擎停在提问处时生成。对手手牌、双方能量区、牌库只给张数（隐藏的卡 `InstanceId` 为 -1，因为 InstanceId 由开局卡组顺序决定，会泄露是哪张卡）。`NewLog` 是上次快照之后的新日志。
+- 界面线程只读快照，从不碰 `GameState`。`GameHost` 不引入任何随机：同样的种子和回答，结果和直接跑引擎完全一样（有测试）。
+- 联机（P4）时对手座位可以换成接收网络回答的 agent，服务端（P5）也可以直接复用。
+
+## 卡片效果预留
+
+卡片效果脚本在 P3 接入：`CardDefinition.ScriptExpanded` 是输入；触发时机（登场、攻击、判定、倒置等）将在引擎对应位置发出事件。
