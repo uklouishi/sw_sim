@@ -1,0 +1,11 @@
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+.idea/
+TestResults/
+# 开发包不进仓库（仅限朋友圈内使用、体积大）。放在仓库根目录的 ws-devkit/ 下，测试会自动读取。
+ws-devkit/
+# Godot
+.godot/
