@@ -27,7 +27,7 @@ public sealed class CardDefinition
     public IReadOnlyList<string> Series { get; init; } = Array.Empty<string>();
     public string? Image { get; init; }
     public IReadOnlyList<string> TextsEn { get; init; } = Array.Empty<string>();
-    /// <summary>已展开宏的效果脚本（P2 由解释器执行；P1 只从中读取 Backup / Counter 等固定字段）。</summary>
+    /// <summary>已展开宏的效果脚本（P3 由解释器执行；P1 只从中读取 Backup / Counter 等固定字段）。</summary>
     public string ScriptExpanded { get; init; } = "";
     /// <summary>【助太刀】的战力数值（脚本里的 <c>Backup 2500</c>），没有则为 null。</summary>
     public int? BackupPower { get; init; }
