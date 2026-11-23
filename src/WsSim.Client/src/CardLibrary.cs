@@ -95,25 +95,97 @@ public sealed class CardLibrary
         return list;
     }
 
+    /// <summary>卡图文件的完整路径（不检查是否存在）；卡片没有登记卡图或没设卡图目录时为 null。</summary>
+    public string? ImagePath(CardDefinition def)
+    {
+        if (string.IsNullOrEmpty(def.Image) || string.IsNullOrEmpty(ImageRoot)) return null;
+        var rel = def.Image.Replace('\\', '/').TrimStart('/');
+        return Path.GetFullPath(Path.Combine(ImageRoot.Trim(), rel.Replace('/', Path.DirectorySeparatorChar)));
+    }
+
+    /// <summary>上一张没能显示的卡图的原因（显示在卡片详情里，方便排查）。</summary>
+    public string? ImageProblem(CardDefinition def) => _problems.TryGetValue(def.Id, out var p) ? p : null;
+
+    private readonly Dictionary<string, string> _problems = new();
+
     /// <summary>卡图；找不到返回 null（界面改为画文字卡面）。结果会缓存。</summary>
     public Texture2D? GetTexture(CardDefinition def)
     {
-        if (string.IsNullOrEmpty(def.Image) || string.IsNullOrEmpty(ImageRoot)) return null;
-        if (_textures.TryGetValue(def.Image, out var cached)) return cached;
-        Texture2D? tex = null;
-        var path = Path.Combine(ImageRoot, def.Image);
-        if (File.Exists(path))
+        var path = ImagePath(def);
+        if (path == null)
         {
-            var img = new Image();
-            if (img.Load(path) == Error.Ok)
+            _problems[def.Id] = string.IsNullOrEmpty(ImageRoot) ? "没有设置卡图目录" : "开发包里这张卡没有登记卡图";
+            return null;
+        }
+        if (_textures.TryGetValue(path, out var cached))
+        {
+            if (cached == null && !_problems.ContainsKey(def.Id)) _problems[def.Id] = "读取失败";
+            return cached;
+        }
+        Texture2D? tex = null;
+        try
+        {
+            if (!File.Exists(path))
             {
-                // 原图较大，缩到 400 高以节省显存。
-                if (img.GetHeight() > 400)
-                    img.Resize(img.GetWidth() * 400 / img.GetHeight(), 400, Image.Interpolation.Lanczos);
-                tex = ImageTexture.CreateFromImage(img);
+                _problems[def.Id] = "文件不存在：" + path;
+            }
+            else
+            {
+                // 自己读文件、按文件头判断格式再解码：不依赖 Godot 对 Windows 路径的处理，
+                // 也能读扩展名和实际格式不符的图片。
+                var bytes = File.ReadAllBytes(path);
+                var img = Decode(bytes);
+                if (img == null)
+                {
+                    _problems[def.Id] = "无法解码：" + path;
+                }
+                else
+                {
+                    // 原图较大，缩到 400 高以节省显存。
+                    if (img.GetHeight() > 400)
+                        img.Resize(img.GetWidth() * 400 / img.GetHeight(), 400, Image.Interpolation.Lanczos);
+                    tex = ImageTexture.CreateFromImage(img);
+                }
             }
         }
-        _textures[def.Image] = tex;
+        catch (Exception e)
+        {
+            _problems[def.Id] = $"读取出错（{e.Message}）：{path}";
+        }
+        if (tex == null) GD.PushWarning($"卡图 {def.Id}：{_problems.GetValueOrDefault(def.Id)}");
+        _textures[path] = tex;
         return tex;
+    }
+
+    private static Image? Decode(byte[] b)
+    {
+        var img = new Image();
+        bool png = b.Length > 4 && b[0] == 0x89 && b[1] == 0x50;
+        bool webp = b.Length > 12 && b[8] == (byte)'W' && b[9] == (byte)'E' && b[10] == (byte)'B' && b[11] == (byte)'P';
+        Func<Error>[] tries = png
+            ? new Func<Error>[] { () => img.LoadPngFromBuffer(b), () => img.LoadJpgFromBuffer(b), () => img.LoadWebpFromBuffer(b) }
+            : webp
+                ? new Func<Error>[] { () => img.LoadWebpFromBuffer(b), () => img.LoadJpgFromBuffer(b), () => img.LoadPngFromBuffer(b) }
+                : new Func<Error>[] { () => img.LoadJpgFromBuffer(b), () => img.LoadPngFromBuffer(b), () => img.LoadWebpFromBuffer(b) };
+        foreach (var t in tries)
+            if (t() == Error.Ok && img.GetWidth() > 0) return img;
+        return null;
+    }
+
+    /// <summary>抽查一些有登记卡图的卡，看卡图文件在不在（菜单里显示结果）。</summary>
+    public (int Checked, int Found, string? FirstMissing) CheckImages(int sample = 200)
+    {
+        int n = 0, found = 0;
+        string? missing = null;
+        foreach (var def in Db.All)
+        {
+            var p = ImagePath(def);
+            if (p == null) continue;
+            n++;
+            if (File.Exists(p)) found++;
+            else missing ??= p;
+            if (n >= sample) break;
+        }
+        return (n, found, missing);
     }
 }
