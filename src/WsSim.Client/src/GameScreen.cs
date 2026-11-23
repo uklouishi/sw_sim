@@ -695,6 +695,8 @@ public partial class GameScreen : Control
         if (def.IsCharacter) parts.Add($"战力 {cv.Power}" + (cv.Power != def.Power ? $"（原 {def.Power}）" : "") + $"　魂 {cv.Soul}");
         if (def.RawTriggers.Count > 0) parts.Add("判定：" + string.Join(" ", def.RawTriggers.Select(Texts.Trigger)));
         if (def.Traits.Count > 0) parts.Add("特征：" + string.Join("・", def.Traits));
+        if (lib != null && lib.GetTexture(def) == null && lib.ImageProblem(def) is { } problem)
+            parts.Add("没有卡图：" + problem);
         _detailInfo.Text = string.Join("\n", parts);
         var texts = Texts.GeneratedTexts(def).Concat(lib?.EffectTexts(def) ?? def.TextsEn);
         _detailText.Text = string.Join("\n\n", texts);

@@ -166,10 +166,18 @@ public partial class MenuScreen : Control
         _main.Settings.CardImagePath = lib.ImageRoot;
         _main.Settings.Save();
 
-        bool hasImages = Directory.Exists(lib.ImageRoot);
         _decks = lib.FindDecks();
-        _status.Text = $"已载入 {lib.Db.Count:N0} 张卡、{_decks.Count} 副卡组。" +
-                       (hasImages ? "" : "没有找到卡图目录，将用文字卡面显示。");
+        string imageStatus;
+        if (!Directory.Exists(lib.ImageRoot))
+            imageStatus = "没有找到卡图目录，将用文字卡面显示。";
+        else
+        {
+            var (n, found, missing) = lib.CheckImages();
+            imageStatus = n == 0 ? "开发包的 cards.json 里没有卡图路径（image 全空），请在有卡图的电脑上重新生成开发包。"
+                : found == n ? $"卡图正常（抽查 {n} 张都找到了）。"
+                : $"卡图抽查 {n} 张只找到 {found} 张，例如找不到 {missing}";
+        }
+        _status.Text = $"已载入 {lib.Db.Count:N0} 张卡、{_decks.Count} 副卡组。{imageStatus}";
         Fill(_playerDeck, _main.Settings.PlayerDeck, "TEST_SAO");
         Fill(_opponentDeck, _main.Settings.OpponentDeck, "TEST_NIKKE");
         _start.Disabled = _decks.Count == 0;
